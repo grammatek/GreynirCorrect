@@ -9,6 +9,9 @@
 ==============================================================
 GreynirCorrect: Spelling and grammar correction for Icelandic
 ==============================================================
+********
+NOTE: the adaptions made for the use of GreynirCorrect in Language Technology are implemented on branch ``tts_frontend``
+********
 
 .. _overview:
 
