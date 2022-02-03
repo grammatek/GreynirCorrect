@@ -70,6 +70,16 @@ R_EINKUNN: Mapping[int, str] = {
 }
 
 
+class NormalizerWordlist:
+
+    # Set of lemmas typically expanded by a TTS Normalizer
+    SET: Set[str] = set()
+
+    @staticmethod
+    def add(word: str) -> None:
+        NormalizerWordlist.SET.add(word)
+
+
 class AllowedMultiples:
 
     # Set of word forms allowed to appear more than once in a row
@@ -636,6 +646,20 @@ class Settings:
             raise ConfigError("Invalid parameter value: {0} = {1}".format(par, val))
 
     @staticmethod
+    def _handle_tts_normalizer_words(s: str) -> None:
+        """Handle config parameters in the tts_normalizer_words section"""
+        assert s
+        if len(s.split()) != 1:
+            raise ConfigError(
+                "Only one word per line allowed in tts_normalizer_words section"
+            )
+        if s in NormalizerWordlist.SET:
+            raise ConfigError(
+                "'{0}' is repeated in tts_normalizer_words section".format(s)
+            )
+        NormalizerWordlist.add(s)
+
+    @staticmethod
     def _handle_allowed_multiples(s: str) -> None:
         """Handle config parameters in the allowed_multiples section"""
         assert s
@@ -969,6 +993,7 @@ class Settings:
 
             CONFIG_HANDLERS = {
                 "settings": Settings._handle_settings,
+                "tts_normalizer_words": Settings._handle_tts_normalizer_words,
                 "allowed_multiples": Settings._handle_allowed_multiples,
                 "wrong_compounds": Settings._handle_wrong_compounds,
                 "split_compounds": Settings._handle_split_compounds,
