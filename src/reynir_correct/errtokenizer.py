@@ -55,7 +55,7 @@ from typing import (
 import re
 from abc import ABC, abstractmethod
 
-from tokenizer import tokenizer as tok
+from tokenizer import tokenizer
 
 from tokenizer.abbrev import Abbreviations
 from tokenizer.definitions import (
@@ -76,7 +76,6 @@ from reynir.bintokenizer import (
     TokenIterator,
     FirstPhaseFunction,
     FollowingPhaseFunction,
-    PhaseFunction,
 )
 from reynir.bindb import GreynirBin
 from reynir.binparser import BIN_Token, VariantHandler
@@ -1011,7 +1010,7 @@ def parse_tokens(txt: Union[str, Iterable[str]], **options: Any) -> Iterator[Tok
     # The default behavior for kludgy ordinals is to pass them
     # through as word tokens
     handle_kludgy_ordinals: int = options.get(
-        "handle_kludgy_ordinals", tok.KLUDGY_ORDINALS_PASS_THROUGH
+        "handle_kludgy_ordinals", tokenizer.KLUDGY_ORDINALS_PASS_THROUGH
     )
 
     # This code proceeds roughly as follows:
@@ -1035,7 +1034,7 @@ def parse_tokens(txt: Union[str, Iterable[str]], **options: Any) -> Iterator[Tok
 
     rtxt: str = ""
 
-    for rt in tok.generate_raw_tokens(
+    for rt in tokenizer.generate_raw_tokens(
         txt, replace_composite_glyphs, replace_html_escapes, one_sent_per_line
     ):
         # rt: raw token
@@ -1052,22 +1051,22 @@ def parse_tokens(txt: Union[str, Iterable[str]], **options: Any) -> Iterator[Tok
         if rtxt == '<sil>':
             yield TOK.Word(rt)
             continue
-        if rtxt.isalpha() or rtxt in tok.SI_UNITS:
+        if rtxt.isalpha() or rtxt in tokenizer.SI_UNITS:
             # Shortcut for most common case: pure word
             yield TOK.Word(rt)
             continue
 
         if len(rtxt) > 1:
-            if rtxt[0] in tok.SIGN_PREFIX and rtxt[1] in tok.DIGITS_PREFIX:
+            if rtxt[0] in tokenizer.SIGN_PREFIX and rtxt[1] in tokenizer.DIGITS_PREFIX:
                 # Digit, preceded by sign (+/-): parse as a number
                 # Note that we can't immediately parse a non-signed number
                 # here since kludges such as '3ja' and domain names such as '4chan.com'
                 # need to be handled separately below
-                t, rt = tok.parse_digits(rt, convert_numbers)
+                t, rt = tokenizer.parse_digits(rt, convert_numbers)
                 yield t
                 if not rt.txt:
                     continue
-            elif rtxt[0] in tok.COMPOSITE_HYPHENS and rtxt[1].isalpha():
+            elif rtxt[0] in tokenizer.COMPOSITE_HYPHENS and rtxt[1].isalpha():
                 # This may be something like '-menn' in 'þingkonur og -menn'
                 i = 2
                 while i < len(rtxt) and rtxt[i].isalpha():
@@ -1081,7 +1080,7 @@ def parse_tokens(txt: Union[str, Iterable[str]], **options: Any) -> Iterator[Tok
 
         # Shortcut for quotes around a single word
         if len(rtxt) >= 3:
-            if rtxt[0] in tok.DQUOTES and rtxt[-1] in tok.DQUOTES:
+            if rtxt[0] in tokenizer.DQUOTES and rtxt[-1] in tokenizer.DQUOTES:
                 # Convert to matching Icelandic quotes
                 # yield TOK.Punctuation("„")
                 if rtxt[1:-1].isalpha():
@@ -1091,7 +1090,7 @@ def parse_tokens(txt: Union[str, Iterable[str]], **options: Any) -> Iterator[Tok
                     yield TOK.Word(word)
                     yield TOK.Punctuation(last_punct, normalized="“")
                     continue
-            elif rtxt[0] in tok.SQUOTES and rtxt[-1] in tok.SQUOTES:
+            elif rtxt[0] in tokenizer.SQUOTES and rtxt[-1] in tokenizer.SQUOTES:
                 # Convert to matching Icelandic quotes
                 # yield TOK.Punctuation("‚")
                 if rtxt[1:-1].isalpha():
@@ -1105,17 +1104,17 @@ def parse_tokens(txt: Union[str, Iterable[str]], **options: Any) -> Iterator[Tok
         # Special case for leading quotes, which are interpreted
         # as opening quotes
         if len(rtxt) > 1:
-            if rtxt[0] in tok.DQUOTES:
+            if rtxt[0] in tokenizer.DQUOTES:
                 # Convert simple quotes to proper opening quotes
                 punct, rt = rt.split(1)
                 yield TOK.Punctuation(punct, normalized="„")
-            elif rt.txt[0] in tok.SQUOTES:
+            elif rt.txt[0] in tokenizer.SQUOTES:
                 # Convert simple quotes to proper opening quotes
                 punct, rt = rt.split(1)
                 yield TOK.Punctuation(punct, normalized="‚")
 
         # More complex case of mixed punctuation, letters and numbers
-        yield from tok.parse_mixed(rt, handle_kludgy_ordinals, convert_numbers)
+        yield from tokenizer.parse_mixed(rt, handle_kludgy_ordinals, convert_numbers)
 
     # Yield a sentinel token at the end that will be cut off by the final generator
     yield TOK.End_Sentinel()
@@ -1133,14 +1132,14 @@ def tts_tokenize(text_or_gen: Union[str, Iterable[str]], **options: Any) -> Iter
     coalesce_percent = options.pop("coalesce_percent", False)
 
     token_stream = parse_tokens(text_or_gen, **options)
-    token_stream = tok.parse_particles(token_stream, **options)
-    token_stream = tok.parse_sentences(token_stream)
-    token_stream = tok.parse_phrases_1(token_stream)
-    token_stream = tok.parse_date_and_time(token_stream)
+    token_stream = tokenizer.parse_particles(token_stream, **options)
+    token_stream = tokenizer.parse_sentences(token_stream)
+    token_stream = tokenizer.parse_phrases_1(token_stream)
+    token_stream = tokenizer.parse_date_and_time(token_stream)
 
     # Skip the parse_phrases_2 pass if the with_annotation option is False
     if with_annotation:
-        token_stream = tok.parse_phrases_2(token_stream, coalesce_percent=coalesce_percent)
+        token_stream = tokenizer.parse_phrases_2(token_stream, coalesce_percent=coalesce_percent)
 
     return (t for t in token_stream if t.kind != TOK.X_END)
 
@@ -2849,6 +2848,52 @@ def check_taboo_words(token_stream: Iterable[CorrectToken]) -> Iterator[CorrectT
         yield token
 
 
+def extract_all_meanings(lemma: str, db: GreynirBin) -> list[BIN_Tuple]:
+    w, m = db.lookup(lemma)
+    bin_entry = m[0]
+    lemma_id = bin_entry.bin_id
+    res = db.lookup_id(lemma_id)
+    wordform_list = []
+    for ksnid in res:
+        wordform = ksnid.bmynd
+        if wordform not in wordform_list:
+            wordform_list.append(wordform)
+
+    meanings = []
+    for wf in wordform_list:
+        _, m = db.lookup_g(wf)
+        # the bin-id is stored in BIN_Tuple.utg, equivalent to BIN_Entry.bin_id
+        for tup in m:
+            if tup.utg == lemma_id:
+                meanings.append(tup)
+
+    return meanings
+
+
+def check_normalized_words(
+        token_stream: Iterable[CorrectToken], db: GreynirBin, token_ctor: TokenCtor
+) -> Iterator[CorrectToken]:
+    """Add meanings for all possible word forms from the TTS normalizer list"""
+
+    # mockup: needs to be from settings NormalizerWordlist
+    nset = ['króna', 'kílómetri']
+
+    for token in token_stream:
+        # Check if possible a normalized token
+        w, m = db.lookup(token.txt)
+        for entry in m:
+            lemma = entry.ord
+
+            if lemma in nset:
+                m_coll = extract_all_meanings(lemma, db)
+                token = token_ctor.Word(
+                    token.txt,
+                    m_coll,
+                    token=token)
+
+        yield token
+
+
 def check_style(
     token_stream: Iterable[CorrectToken], db: GreynirBin
 ) -> Iterator[CorrectToken]:
@@ -3147,6 +3192,7 @@ class CorrectionPipeline(DefaultPipeline):
         # Check taboo words
         if not only_ci:
             ct_stream = check_taboo_words(ct_stream)
+        ct_stream = check_normalized_words(ct_stream, self._db, token_ctor)
         # Check context-independent style errors, indicated in BÍN
         ct_stream = check_style(ct_stream, self._db)
         return ct_stream
