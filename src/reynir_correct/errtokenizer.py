@@ -55,6 +55,8 @@ from typing import (
 import re
 from abc import ABC, abstractmethod
 
+from tokenizer import tokenizer as tok
+
 from tokenizer.abbrev import Abbreviations
 from tokenizer.definitions import (
     BIN_Tuple,
@@ -72,6 +74,9 @@ from reynir.bintokenizer import (
     load_token,
     StringIterable,
     TokenIterator,
+    FirstPhaseFunction,
+    FollowingPhaseFunction,
+    PhaseFunction,
 )
 from reynir.bindb import GreynirBin
 from reynir.binparser import BIN_Token, VariantHandler
@@ -990,6 +995,162 @@ class PhraseError(Error):
     @property
     def description(self) -> str:
         return self._txt
+
+
+def parse_tokens(txt: Union[str, Iterable[str]], **options: Any) -> Iterator[Tok]:
+    """ Generator that parses contiguous text into a stream of tokens.
+    Overridden from tokenizer. A possibility to skip the analysis and thus the
+    splitting up of defined strings."""
+
+    # Obtain individual flags from the options dict
+    convert_numbers: bool = options.get("convert_numbers", False)
+    replace_composite_glyphs: bool = options.get("replace_composite_glyphs", True)
+    replace_html_escapes: bool = options.get("replace_html_escapes", False)
+    one_sent_per_line: bool = options.get("one_sent_per_line", False)
+
+    # The default behavior for kludgy ordinals is to pass them
+    # through as word tokens
+    handle_kludgy_ordinals: int = options.get(
+        "handle_kludgy_ordinals", tok.KLUDGY_ORDINALS_PASS_THROUGH
+    )
+
+    # This code proceeds roughly as follows:
+    # 1) The text is split into raw tokens on whitespace boundaries.
+    # 2) (By far the most common case:) Raw tokens that are purely
+    #    alphabetic are yielded as word tokens.
+    # 3) Punctuation from the front of the remaining raw token is identified
+    #    and yielded. A special case applies for quotes.
+    # 4) A set of checks is applied to the rest of the raw token, identifying
+    #    tokens such as e-mail addresses, domains and @usernames. These can
+    #    start with digits, so the checks must occur before step 5.
+    # 5) Tokens starting with a digit (eventually preceded
+    #    by a + or - sign) are sent off to a separate function that identifies
+    #    integers, real numbers, dates, telephone numbers, etc. via regexes.
+    # 6) After such checks, alphabetic sequences (words) at the start of the
+    #    raw token are identified. Such a sequence can, by the way, also
+    #    contain embedded apostrophes and hyphens (Dunkin' Donuts, Mary's,
+    #    marg-ítrekaðri).
+    # 7) The process is repeated from step 4) until the current raw token is
+    #    exhausted. At that point, we obtain the next token and start from 2).
+
+    rtxt: str = ""
+
+    for rt in tok.generate_raw_tokens(
+        txt, replace_composite_glyphs, replace_html_escapes, one_sent_per_line
+    ):
+        # rt: raw token
+
+        if rt.kind in {TOK.S_SPLIT, TOK.P_BEGIN, TOK.P_END}:
+            # Sentence split markers and paragraph separators require
+            # no further processing. Yield them immediately.
+            yield rt
+            continue
+
+        rtxt = rt.txt
+        # if rtxt is an "immune" token - we have to have means to keep it
+        # need to extend with SSML-tags pattern(s)
+        if rtxt == '<sil>':
+            yield TOK.Word(rt)
+            continue
+        if rtxt.isalpha() or rtxt in tok.SI_UNITS:
+            # Shortcut for most common case: pure word
+            yield TOK.Word(rt)
+            continue
+
+        if len(rtxt) > 1:
+            if rtxt[0] in tok.SIGN_PREFIX and rtxt[1] in tok.DIGITS_PREFIX:
+                # Digit, preceded by sign (+/-): parse as a number
+                # Note that we can't immediately parse a non-signed number
+                # here since kludges such as '3ja' and domain names such as '4chan.com'
+                # need to be handled separately below
+                t, rt = tok.parse_digits(rt, convert_numbers)
+                yield t
+                if not rt.txt:
+                    continue
+            elif rtxt[0] in tok.COMPOSITE_HYPHENS and rtxt[1].isalpha():
+                # This may be something like '-menn' in 'þingkonur og -menn'
+                i = 2
+                while i < len(rtxt) and rtxt[i].isalpha():
+                    i += 1
+                # We allow -menn and -MENN, but not -Menn or -mEnn
+                # We don't allow -Á or -Í, i.e. single-letter uppercase combos
+                if rtxt[:i].islower() or (i > 2 and rtxt[:i].isupper()):
+                    head, rt = rt.split(i)
+                    yield TOK.Word(head)
+            rtxt = rt.txt
+
+        # Shortcut for quotes around a single word
+        if len(rtxt) >= 3:
+            if rtxt[0] in tok.DQUOTES and rtxt[-1] in tok.DQUOTES:
+                # Convert to matching Icelandic quotes
+                # yield TOK.Punctuation("„")
+                if rtxt[1:-1].isalpha():
+                    first_punct, rt = rt.split(1)
+                    word, last_punct = rt.split(-1)
+                    yield TOK.Punctuation(first_punct, normalized="„")
+                    yield TOK.Word(word)
+                    yield TOK.Punctuation(last_punct, normalized="“")
+                    continue
+            elif rtxt[0] in tok.SQUOTES and rtxt[-1] in tok.SQUOTES:
+                # Convert to matching Icelandic quotes
+                # yield TOK.Punctuation("‚")
+                if rtxt[1:-1].isalpha():
+                    first_punct, rt = rt.split(1)
+                    word, last_punct = rt.split(-1)
+                    yield TOK.Punctuation(first_punct, normalized="‚")
+                    yield TOK.Word(word)
+                    yield TOK.Punctuation(last_punct, normalized="‘")
+                    continue
+
+        # Special case for leading quotes, which are interpreted
+        # as opening quotes
+        if len(rtxt) > 1:
+            if rtxt[0] in tok.DQUOTES:
+                # Convert simple quotes to proper opening quotes
+                punct, rt = rt.split(1)
+                yield TOK.Punctuation(punct, normalized="„")
+            elif rt.txt[0] in tok.SQUOTES:
+                # Convert simple quotes to proper opening quotes
+                punct, rt = rt.split(1)
+                yield TOK.Punctuation(punct, normalized="‚")
+
+        # More complex case of mixed punctuation, letters and numbers
+        yield from tok.parse_mixed(rt, handle_kludgy_ordinals, convert_numbers)
+
+    # Yield a sentinel token at the end that will be cut off by the final generator
+    yield TOK.End_Sentinel()
+
+
+def tts_tokenize(text_or_gen: Union[str, Iterable[str]], **options: Any) -> Iterator[Tok]:
+    """ Same as tokenizer.tokenize(). Tokenize text in several phases, returning a generator
+        (iterable sequence) of tokens that processes tokens on-demand. """
+
+    # Thank you Python for enabling this programming pattern ;-)
+
+    # Make sure that the abbreviation config file has been read
+    Abbreviations.initialize()
+    with_annotation = options.pop("with_annotation", False)
+    coalesce_percent = options.pop("coalesce_percent", False)
+
+    token_stream = parse_tokens(text_or_gen, **options)
+    token_stream = tok.parse_particles(token_stream, **options)
+    token_stream = tok.parse_sentences(token_stream)
+    token_stream = tok.parse_phrases_1(token_stream)
+    token_stream = tok.parse_date_and_time(token_stream)
+
+    # Skip the parse_phrases_2 pass if the with_annotation option is False
+    if with_annotation:
+        token_stream = tok.parse_phrases_2(token_stream, coalesce_percent=coalesce_percent)
+
+    return (t for t in token_stream if t.kind != TOK.X_END)
+
+
+def tokenize_without_annotation(
+    text_or_gen: Union[str, Iterable[str]], **options: Any
+) -> Iterator[Tok]:
+    """ Overridden from tokenzer. Tokenize without the last pass which can be done more thoroughly if BÍN
+        annotation is available, for instance in GreynirPackage. """
+    return tts_tokenize(text_or_gen, **options)
 
 
 def parse_errors(
@@ -2884,7 +3045,12 @@ class Correct_TOK(Bin_TOK):
 class CorrectionPipeline(DefaultPipeline):
 
     """Override the default tokenization pipeline defined in bintokenizer.py
-    in GreynirPackage, adding a correction phase"""
+    in GreynirPackage, adding a correction phase.
+    In the GreynirCorrect4LT version we override a part of the tokenizing process
+    to gain more control, most importantly to be able to skip processing of
+    selected strings. While the original Greynir Correct uses
+    DefaultPipeline.tokenize_without_annotation, we define CorrectionPipeline.tokenize_without_annotation."""
+    # TODO: look into how we can minimize the overriding from the base tokenizer - which is largely just copu-paste
 
     # Use the Correct_TOK class to construct tokens, instead of
     # TOK (tokenizer.py) or Bin_TOK (bintokenizer.py)
@@ -2907,6 +3073,43 @@ class CorrectionPipeline(DefaultPipeline):
         self._suggest_not_correct = options.pop("suggest_not_correct", False)
         # Wordlist for words that should not be marked as errors or corrected
         self._ignore_wordlist = options.pop("ignore_wordlist", set())
+
+    def tokenize_without_annotation(self) -> TokenIterator:
+        """ The basic, raw tokenization from the tokenizer package, slightly adapted for more control
+         using errtokenizer """
+        return tokenize_without_annotation(self._text_or_gen, **self._options)
+
+    def tokenize(self) -> TokenIterator:
+        """ Tokenize text in several phases, returning a generator of tokens
+            that processes the text on-demand. If auto_uppercase is True, the tokenizer
+            attempts to correct lowercase words that probably should be uppercase.
+            If correction_func is not None, the given generator function is inserted
+            into the token chain after processing static phrases but before
+            BÍN annotation. This gives an opportunity to perform context-independent
+            spelling corrections and the like. """
+
+        if self._db is not None:
+            # This should never occur, even in multi-threaded programs, since
+            # each tokenize() call creates its own instance of DefaultPipeline
+            raise ValueError("CorrectorPipeline.tokenize() is not re-entrant")
+
+        # We stack the tokenization phases together. Each generator
+        # becomes a consumer of the previous generator.
+
+        # Thank you Python for enabling this programming pattern ;-)
+
+        with GreynirBin.get_db() as db:
+            try:
+                self._db = db
+                # First tokenization phase
+                token_stream = cast(FirstPhaseFunction, self._phases[0])()
+                # Stack the other phases on top of each other
+                for phase in self._phases[1:]:
+                    token_stream = cast(FollowingPhaseFunction, phase)(token_stream)
+                # ...and return the resulting chained generator
+                return token_stream
+            finally:
+                self._db = None
 
     def correct_tokens(self, stream: TokenIterator) -> TokenIterator:
         """Add a correction pass just before BÍN annotation"""
