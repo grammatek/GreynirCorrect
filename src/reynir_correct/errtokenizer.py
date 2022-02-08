@@ -82,6 +82,7 @@ from reynir.binparser import BIN_Token, VariantHandler
 from islenska.basics import Ksnid
 
 from .settings import (
+    NormalizerWordlist,
     AllowedMultiples,
     WrongCompounds,
     SplitCompounds,
@@ -2875,16 +2876,17 @@ def check_normalized_words(
 ) -> Iterator[CorrectToken]:
     """Add meanings for all possible word forms from the TTS normalizer list"""
 
-    # mockup: needs to be from settings NormalizerWordlist
-    nset = ['króna', 'kílómetri']
-
     for token in token_stream:
         # Check if possible a normalized token
         w, m = db.lookup(token.txt)
+        checked_lemmas = []
         for entry in m:
             lemma = entry.ord
-
-            if lemma in nset:
+            # same form of lemma possible for different entries
+            # only need to check each form once
+            if lemma in checked_lemmas:
+                continue
+            if lemma in NormalizerWordlist.SET:
                 m_coll = extract_all_meanings(lemma, db)
                 token = token_ctor.Word(
                     token.txt,
