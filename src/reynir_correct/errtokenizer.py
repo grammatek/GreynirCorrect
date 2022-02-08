@@ -1047,9 +1047,11 @@ def parse_tokens(txt: Union[str, Iterable[str]], **options: Any) -> Iterator[Tok
             continue
 
         rtxt = rt.txt
-        # if rtxt is an "immune" token - we have to have means to keep it
-        # need to extend with SSML-tags pattern(s)
-        if rtxt == '<sil>':
+        # We assume for TTS-spell checking, that we are dealing with cleaned, normalized text.
+        # Therefore, all tags and closing tags still in the text should not be touched!
+        # TODO: when we start using fully fledged ssml we need to have a list of
+        # TODO: not to touch, e.g. for <break>: none, weak, medium, strong, ...
+        if rtxt.startswith('<') or rtxt.startswith('xml'):
             yield TOK.Word(rt)
             continue
         if rtxt.isalpha() or rtxt in tokenizer.SI_UNITS:
