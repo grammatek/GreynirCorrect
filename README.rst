@@ -6,9 +6,12 @@
 .. image:: https://github.com/mideind/GreynirCorrect/workflows/Python%20package/badge.svg?branch=master
     :target: https://github.com/mideind/GreynirCorrect/actions?query=workflow%3A%22Python+package%22
 
-==============================================================
-GreynirCorrect: Spelling and grammar correction for Icelandic
-==============================================================
+====================================================================================
+GreynirCorrect4LT: Spelling and grammar correction for Icelandic Language Technology
+====================================================================================
+This is a slightly adapted version of `Miðeind's GreynirCorrect <https://github.com/mideind/GreynirCorrect>`__, from which this repository is forked.
+
+This version is implemented for use in a text-to-speech text pre-processing pipeline, but the documentation below shows some access points for a quick adaptation to other use cases in language technology applications.
 
 .. _overview:
 
@@ -24,100 +27,62 @@ by the same authors, to tokenize and parse text.
 
 GreynirCorrect is documented in detail `here <https://yfirlestur.is/doc/>`__.
 
-The software has three main modes of operation, described below.
+For the instructions on how to use GreynirCorrect as is, please consult the original `repository <https://github.com/mideind/GreynirCorrect>`__
 
-As a fourth alternative, you can call the JSON REST API
-of `Yfirlestur.is <https://yfirlestur.is>`__
-to apply the GreynirCorrect spelling and grammar engine to your text,
-as `documented here <https://github.com/mideind/Yfirlestur#https-api>`__.
-
-Token-level correction
+Getting started
 ----------------------
 
-GreynirCorrect can tokenize text and return an automatically corrected token stream.
-This catches token-level errors, such as spelling errors and erroneous
-phrases, but not grammatical errors. Token-level correction is relatively fast.
+To try out GreynirCorrect for your use case, a good place to start is to create your own API script in ``src/reynir_correct/tools/``. For examples, see the existing scripts ``diffchecker.py`` and ``tts_frontend.py``. This of course only applies if you plan to change the core code base, otherwise you should use GreynirCorrect or GreynirCorrect4LT as a library.
 
-Full grammar analysis
----------------------
+The correction pipeline
+-----------------------
 
-GreynirCorrect can analyze text grammatically by attempting to parse
-it, after token-level correction. The parsing is done according to Greynir's
-context-free grammar for Icelandic, augmented with additional production
-rules for common grammatical errors. The analysis returns a set of annotations
-(errors and suggestions) that apply to spans (consecutive tokens) within
-sentences in the resulting token list. Full grammar analysis is considerably
-slower than token-level correction.
+GreynirCorrect relies heavily on the `Greynir <https://pypi.org/project/reynir/>`__ package, and a lot of "magic" happens under the hood, not directly accessible from GreynirCorrect. The tokenizing process also performs corrections along the way, and essentially three tokenizers work together in GreynirCorrect:
 
-Command-line tool
+`tokenizer.py from Tokenizer <https://github.com/mideind/Tokenizer/blob/master/src/tokenizer/tokenizer.py>`__
+
+`bintokenizer.py from GreynirPackage <https://github.com/mideind/GreynirPackage/blob/master/src/reynir/bintokenizer.py>`__
+
+``errtokenizer.py`` from GreynirCorrect: ``src/reynir_correct/errtokenizer.py``
+
+Since we cannot - and should not - interfere with the tokenizers from Tokenizer and GreynirPackage, we use ``errtokenizer`` to override processes as needed. A spell correction pipeline is defined in ``bintokenizer`` as ``class DefaultPipeline``.  Familiarize yourself with this pipeline to get an overview of how GreynirCorrect works.
+
+The *DefaultPipeline* is overridden as ``class CorrectionPipeline`` in ``errtokenizer.py``. Here, we have the possibility to override PhaseFunctions defined in the ``DefaultPipeline`` to change the default tokenizing/correcting process. In the default implementation of GreynirCorret, the pipeline in ``CorrectionPipeline`` looks like this (remember: ``DefaultPipeline`` is defined in ``bintokenizer.py`` in GreynirPackage, the ``CorrectionPipeline`` in ``errtokenizer.py``):
+
+.. code-block:: python
+
+   DefaultPipeline.tokenize_without_annotation  # core function: tokenizer.tokenize()
+   CorrectionPipeline.correct_tokens            # core function: errtokenizer.parse_errors()
+   DefaultPipeline.parse_static_phrases         # core function: bintokenizer.StaticPhraseStream.process()
+   DefaultPipeline.annotate                     # core function: bintokenizer.annotate()
+   DefaultPipeline.recognize_entities           # not implemented
+   CorrectionPipeline.check_spelling            # core function: CorrectionPipeline.check_spelling()
+   DefaultPipeline.parse_phrases_1              # core function: bintokenizer.parse_phrases_1()
+   DefaultPipeline.parse_phrases_2              # core function: bintokenizer.parse_phrases_2()
+   DefaultPipeline.parse_phrases_3              # core function: bintokenizer.parse_phrases_3()
+   DefaultPipeline.fix_abbreviations            # core function: bintokenizer.fix_abbreviations()
+   DefaultPipeline.disambiguate_phrases         # core function: bintokenizer.DisambiguationStream.process()
+   CorrectionPipeline.final_correct             # core function: CorrectionPipeline.final_correct()
+
+
+To change the tokenization itself, i.e. to change the way the input text is split up into tokens, we need to override the first PhaseFunction and change ``DefaultPipeline.tokenize_without_annotation`` to ``CorrectionPipeline.tokenize_without_annotation``. In the current 4LT-implementation, tokens starting with ``<`` are not split up as happens in the original tokenizer. For example, the original tokenizer would split ``<sil>`` into ``< sil >``, making the token ``sil`` an object for correction to ``til``. The text-to-speech (TTS) pipeline relies on all tags being kept as is at this stage, in previous analysis steps for example SSML-tags for the TTS system might have been added.
+
+
+Adding word lists
 -----------------
 
-GreynirCorrect can be invoked as a command-line tool
-to perform token-level correction and, optionally, grammar analysis.
-The command is ``correct infile.txt outfile.txt``.
-The command-line tool is further documented below.
+GreynirCorrect uses different word lists and maps to assist with spell checking and correction. For LT-applications we might want to add our own lists of words that need special treatment during the process. In case of the TTS frontend pipeline, we add a list of lemmas that represent words that are a typical output of a text normalization system for TTS. The normalization system expands abbreviations and replaces digits with their written-out forms, e.g. ``5`` becomes ``five`` in a TTS-normalized text. In Icelandic, many of these words are inflected and while the normalizer has certain means to determine the correct case, gender and number of an expanded word, it does make errors. To increase the possibility of a correct form, we attach all possible forms to these words, should they occur in the input, and let the parser in GreynirPackage choose the most likeliy PoS tags for the token. In a post-processing step we can then correct the token according to the PoS tags.
 
-.. _examples:
+To add a new word list or word information file, you should add it to ``reynir_correct/config/``. There you can see the files GreynirCorrect already uses. To read a word information file on initialization and to be able to use an object containing this information, you need to edit two files: ``reynir_correct/config/GreynirCorrect.conf`` and ``reynir_correct/settings.py``. 
 
-********
-Examples
-********
+``GreynirCorrect.conf`` does also contain several word lists, but for additional data it is better to create separate files. To tell GreynirCorrect to read your data on initialization, define the data structure you want to use (set, map, ...) in the ``settings`` file, add a corresponding handling method, and add an entry to ``CONFIG_HANDLERS`` in ``settings.read()``. In ``GreynirCorrect.conf``, add an include statement at the end of the file, see ``tts_normalizer_words`` as an example.
 
-To perform token-level correction from Python code:
 
-.. code-block:: python
+Adding or changing functionality
+--------------------------------
 
-   >>> from reynir_correct import tokenize
-   >>> g = tokenize("Af gefnu tilefni fékk fékk daninn vilja sýnum "
-   >>>     "framgengt í auknu mæli.")
-   >>> for tok in g:
-   >>>     print("{0:10} {1}".format(tok.txt or "", tok.error_description))
+To change or add functionality of GreynirCorrect, you most likely will edit, override, or add functions to ``errtokenizer.py``. Study the CorrectionPipeline to find the best fitting access point for your adaptation. Also, make sure to import your data from settings, as described in the previous section, if you have added any extra word information data. To see how functionality may be added, study ``errtokenizer.check_normalized_words()``. 
 
-Output::
-
-   Að         Orðasambandið 'Af gefnu tilefni' var leiðrétt í 'að gefnu tilefni'
-   gefnu
-   tilefni
-   fékk       Endurtekið orð ('fékk') var fellt burt
-   Daninn     Orð á að byrja á hástaf: 'daninn'
-   vilja      Orðasambandið 'vilja sýnum framgengt' var leiðrétt í 'vilja sínum framgengt'
-   sínum
-   framgengt
-   í          Orðasambandið 'í auknu mæli' var leiðrétt í 'í auknum mæli'
-   auknum
-   mæli
-   .
-
-To perform full spelling and grammar analysis of a sentence from Python code:
-
-.. code-block:: python
-
-   from reynir_correct import check_single
-   sent = check_single("Páli, vini mínum, langaði að horfa á sjónnvarpið.")
-   for annotation in sent.annotations:
-       print("{0}".format(annotation))
-
-Output::
-
-   000-004: P_WRONG_CASE_þgf_þf Á líklega að vera 'Pál, vin minn' / [Pál , vin minn]
-   009-009: S004   Orðið 'sjónnvarpið' var leiðrétt í 'sjónvarpið'
-
-.. code-block:: python
-
-   sent.tidy_text
-
-Output::
-
-   'Páli, vini mínum, langaði að horfa á sjónvarpið.'
-
-The ``annotation.start`` and ``annotation.end`` properties
-(here ``start`` is 0 and ``end`` is 4) contain the 0-based indices of the first
-and last tokens to which the annotation applies.
-The ``annotation.start_char`` and ``annotation.end_char`` properties
-contain the indices of the first and last character to which the
-annotation applies, within the original input string.
-
-``P_WRONG_CASE_þgf_þf`` and ``S004`` are error codes.
 
 .. _prerequisites:
 
@@ -383,3 +348,5 @@ In accordance with the BÍN license terms, credit is hereby given as follows:
 
 *Beygingarlýsing íslensks nútímamáls. Stofnun Árna Magnússonar í íslenskum fræðum.*
 *Höfundur og ritstjóri Kristín Bjarnadóttir.*
+
+**GreynirCorrect4LT** is implemented and maintained by Grammatek ehf. as a part of Icelandic Government's 5-year Language Technology Programme for Icelandic. 
