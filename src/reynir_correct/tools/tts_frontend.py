@@ -72,6 +72,12 @@ def post_process(annot_sent: AnnotatedSentence, bin_db: Bin) -> str:
         if not token.meanings or len(term.variants) <= 2:
             checked_sent.append(term.text)
             continue
+
+        # if an error has been corrected, let's stick with that and don't do post processing
+        # otherwise over-correction danger when looking up term.variants
+        if token.has_error:
+            checked_sent.append(term.text)
+            continue
         genus, case_num_tuple = extract_pos_info(term.variants)
 
         reslist = bin_db.lookup_variants(term.lemma, genus, case_num_tuple)
