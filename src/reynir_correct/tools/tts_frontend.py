@@ -94,6 +94,16 @@ def gen(f: Iterator[str]) -> Iterable[str]:
     yield from f
 
 
+def tts_spellcheck(sent: str) -> str:
+    bin_db = Bin()
+    checked = check_single(sent.strip())
+    if not checked or checked.terminals is None:
+        # parse and/or spell check failed, we store the original sentence
+        return sent.strip()
+    else:
+        return post_process(checked, bin_db)
+
+
 def main():
 
     args = parser.parse_args()
