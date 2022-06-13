@@ -1296,7 +1296,12 @@ def parse_errors(
                         at_sentence_start = False
                         continue
 
+            ######### TTS special case: don't check for word duplication! ###################
+            # For TTS, this check is not desirable: we are correcting normalized text
+            # that can e.g. contain repeated numbers like 'fimm fimm sjö' etc.
+            #################################################################################
             # Word duplication (note that word case must also match)
+            """
             if (
                 not only_ci
                 and token.txt
@@ -1331,6 +1336,7 @@ def parse_errors(
                 token = next_token
                 at_sentence_start = False
                 continue
+            """
 
             # Word duplication with different cases
             # Only provide a suggestion
