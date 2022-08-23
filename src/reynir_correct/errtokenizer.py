@@ -3071,7 +3071,7 @@ def check_taboo_words(token_stream: Iterable[CorrectToken]) -> Iterator[CorrectT
         yield token
 
 
-def extract_all_meanings(lemma: str, db: GreynirBin) -> list[BIN_Tuple]:
+def extract_all_meanings(lemma: str, db: GreynirBin) -> List[BIN_Tuple]:
     w, m = db.lookup(lemma)
     bin_entry = m[0]
     lemma_id = bin_entry.bin_id
