@@ -5,7 +5,7 @@
 
     Spelling and grammar checking module
 
-    Copyright (C) 2021 Miðeind ehf.
+    Copyright (C) 2022 Miðeind ehf.
 
     This software is licensed under the MIT License:
 
@@ -38,6 +38,7 @@
 
 from typing import (
     Dict,
+    Union,
 )
 
 import sys
@@ -70,16 +71,19 @@ parser.add_argument(
 
 parser.add_argument(
     "--suppress_suggestions",
-    "-sss",
+    "-ss",
     action="store_true",
     help="Suppress more agressive error suggestions",
 )
 
-parser.add_argument("--spaced", help="Separate tokens with spaces", action="store_true")
+parser.add_argument(
+    "--spaced", "-sp", help="Separate tokens with spaces", action="store_true"
+)
 
 # Determines the output format
 parser.add_argument(
     "--format",
+    "-f",
     nargs="?",
     type=str,
     default="text",
@@ -94,19 +98,61 @@ parser.add_argument(
     action="store_true",
 )
 
+# Add --grammar for compatibility; works the same as --all_errors
+parser.add_argument(
+    "--grammar",
+    "-g",
+    help="Annotate both grammar and spelling errors",
+    action="store_true",
+)
+
+# Add --json for compatibility; works the same as --format=json
+parser.add_argument(
+    "--json",
+    "-j",
+    help="Output in JSON format",
+    action="store_true",
+)
+
+# Add --csv for compatibility; works the same as --format=csv
+parser.add_argument(
+    "--csv",
+    "-c",
+    help="Output in CSV format",
+    action="store_true",
+)
+
+# Add --normalize
+parser.add_argument(
+    "--normalize",
+    "-n",
+    help="Normalize punctuation",
+    action="store_true",
+)
+
 
 def main() -> None:
     """Main function, called when the 'correct' command is invoked"""
 
     args = parser.parse_args()
     # Fill options with information from args
-    options: Dict[str, bool] = {}
-    options["infile"] = args.infile
+    if args.infile is sys.stdin and sys.stdin.isatty():
+        # terminal input is empty, most likely no value was given for infile:
+        # Nothing we can do
+        print("No input has been given, nothing can be returned")
+        sys.exit(1)
+    options: Dict[str, Union[bool, str]] = {}
+    options["input"] = args.infile
     if args.suppress_suggestions:
         options["suppress_suggestions"] = args.suppress_suggestions
     options["format"] = args.format
+    if args.json:
+        options["format"] = "json"
+    elif args.csv:
+        options["format"] = "csv"
     options["spaced"] = args.spaced
-    options["all_errors"] = args.all_errors
+    options["normalize"] = args.normalize
+    options["all_errors"] = args.all_errors or args.grammar
     print(check_errors(**options), file=args.outfile)
 
 

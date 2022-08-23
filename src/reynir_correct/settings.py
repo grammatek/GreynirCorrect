@@ -4,7 +4,7 @@
 
     Settings module
 
-    Copyright (C) 2021 Miðeind ehf.
+    Copyright (C) 2022 Miðeind ehf.
 
     This software is licensed under the MIT License:
 
@@ -41,7 +41,7 @@
 
 """
 
-from typing import Dict, Set, List, Tuple, Mapping, Union, Optional, Any
+from typing import Dict, Set, List, Tuple, Mapping, Optional, Any
 import os
 import threading
 

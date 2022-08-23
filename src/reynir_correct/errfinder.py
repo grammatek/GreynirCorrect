@@ -4,7 +4,7 @@
 
     Error finder for parse trees
 
-    Copyright (C) 2021 Miðeind ehf.
+    Copyright (C) 2022 Miðeind ehf.
 
     This software is licensed under the MIT License:
 
@@ -64,24 +64,24 @@ from .annotation import Annotation
 from .errtokenizer import emulate_case
 from .pattern import PatternMatcher
 
+
 # Typing stuff
 class AnnotationDict(TypedDict):
     """The annotation for a sentence"""
 
     text: str
     detail: str
-    start: Optional[int]
-    end: Optional[int]
+    start: int
+    end: int
     original: Optional[str]
     suggest: Optional[str]
 
 
-# AnnotationDict = Dict[str, Union[str, int, None]]
 AnnotationTuple2 = Tuple[str, str]
 AnnotationTuple4 = Tuple[str, int, int, str]
 AnnotationTuple6 = Tuple[str, str, int, int, str, str]
 AnnotationReturn = Union[
-    str, AnnotationTuple2, AnnotationTuple4, AnnotationTuple6, AnnotationDict
+    None, str, AnnotationTuple2, AnnotationTuple4, AnnotationTuple6, AnnotationDict
 ]
 AnnotationFunc = Callable[[str, str, Node], AnnotationReturn]
 
@@ -325,7 +325,7 @@ class ErrorFinder(ParseForestNavigator):
         start, end = self.node_span(node)
         return AnnotationDict(
             text="'{0}' er sennilega ofaukið".format(txt),
-            detail="Yfirleitt nægir að nota 'en' í þessu samhengi.",
+            detail="Yfirleitt nægir að nota 'en' í þessu samhengi, 'heldur en' telst frekar óformlegt. Það á þó stundum rétt hjá sér í löngum setningum ef langt er frá upphaflega samanburðarliðnum til seinni samanburðarliðarins til að auka skýrleika textans.",
             original=orig_txt,
             start=start,
             end=end,
@@ -597,19 +597,21 @@ class ErrorFinder(ParseForestNavigator):
             suggest=correct_pronoun,
         )
 
-    def AðvörunSem(self, txt: str, variants: str, node: Node) -> AnnotationDict:
+    def AðvörunSemOg(self, txt: str, variants: str, node: Node) -> AnnotationDict:
         # 'sem' er sennilega ofaukið
-        start, end = self.node_span(node)
+        ch1, ch2 = self._terminal_nodes[node.start : node.end]
+        start, _ = ch1.span
+        _, end = ch2.span
         return AnnotationDict(
-            text="'{0}' er að öllum líkindum ofaukið".format(txt),
+            text="'{0}' er að öllum líkindum ofaukið".format(ch1.text),
             detail=(
-                "Oft fer betur á að rita 'og', 'og einnig' eða 'og jafnframt' "
-                " í stað 'sem og'."
+                "Oft fer betur á að rita 'og', 'og einnig', 'og jafnframt' "
+                " eða 'og auk þess' í stað 'sem og'."
             ),
             start=start,
             end=end,
             original=txt,
-            suggest="",  # Token should be deleted
+            suggest="og einnig",
         )
 
     def AðvörunAð(self, txt: str, variants: str, node: Node) -> AnnotationDict:
@@ -669,7 +671,9 @@ class ErrorFinder(ParseForestNavigator):
             suggest=suggestion,
         )
 
-    def VillaÍTölu(self, txt: str, variants: str, node: Node) -> AnnotationDict:
+    def VillaÍTölu(
+        self, txt: str, variants: str, node: Node
+    ) -> Optional[AnnotationDict]:
         # Sögn á að vera í sömu tölu og frumlag
         children = list(node.enum_child_nodes())
         ch0, ch1 = children
@@ -712,13 +716,17 @@ class ErrorFinder(ParseForestNavigator):
             v -= {"ft"}
             v.add("et")
         suggest = PatternMatcher.get_wordform(so.text.lower(), so.lemma, "so", v)
+        suggest = emulate_case(suggest, template=origin)
+        if suggest == origin or not suggest:
+            # Avoid meaningless annotation
+            return None
         return AnnotationDict(
             text="Sögnin á sennilega að vera í {1}, þ.e. '{0}'".format(suggest, number),
             detail=detail,
             start=start,
             end=end,
             original=origin,
-            suggest=emulate_case(suggest, template=origin),
+            suggest=suggest,
         )
 
     def VillaFsMeðFallstjórn(
@@ -1080,7 +1088,7 @@ class ErrorFinder(ParseForestNavigator):
             objtree = self.find_verb_direct_object(tnode)
             if objtree is None:
                 return
-            code = "P_WRONG_CASE" + obj_case_abbr + "_" + correct_case_abbr
+            code = "P_WRONG_CASE_" + obj_case_abbr + "_" + correct_case_abbr
             if objtree is not None:
                 # We know what the object is: annotate it
                 start, end = objtree.span
@@ -1260,12 +1268,12 @@ class ErrorFinder(ParseForestNavigator):
                     # Empty or no dict: this means that upon closer inspection,
                     # there was no need to annotate
                     return None
-                ann_text = cast(str, ann.get("text"))
-                ann_detail = cast(str, ann.get("detail"))
-                original = cast(str, ann.get("original"))
-                suggestion = cast(str, ann.get("suggest"))
-                start = cast(int, ann.get("start", start))
-                end = cast(int, ann.get("end", end))
+                ann_text = ann.get("text") or ""
+                ann_detail = ann.get("detail") or ""
+                original = ann.get("original") or ""
+                suggestion = ann.get("suggest") or ""
+                start = ann.get("start", start)
+                end = ann.get("end", end)
         else:
             # No: use a default text
             ann_text = "'{0}' er líklega rangt".format(span_text)

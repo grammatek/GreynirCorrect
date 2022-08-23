@@ -12,6 +12,7 @@ from typing import (
     Iterator,
     Iterable,
     Dict,
+    Set,
     Union,
 )
 import sys
@@ -25,7 +26,7 @@ WriteFile = argparse.FileType("w", encoding="utf-8")
 parser = argparse.ArgumentParser(description="Corrects Icelandic text")
 
 parser.add_argument(
-    "inputfile",
+    "infile",
     nargs="?",
     type=ReadFile,
     default=sys.stdin,
@@ -38,39 +39,42 @@ def gen(f: Iterator[str]) -> Iterable[str]:
     yield from f
 
 
-def main():
+def main() -> None:
 
-    options: Dict[str, Union[str, bool]] = {}
-    # Hægt að biðja um annað til að fá frekari upplýsingar!
-    options["format"] = "text"  # text, json, csv, m2, textplustoks
+    options: Dict[str, Union[str, bool, Set[str]]] = {}
+    options["format"] = "text"  # text, json, csv, m2
     options["annotations"] = True
     options["all_errors"] = True
-    # options["infile"] = open("prufa.txt", "r")
+    # options["input"] = open("prufa.txt", "r")
     options["one_sent"] = False
     # options["generate_suggestion_list"] = True
-    options["ignore_comments"] = True
+    options["ignore_comments"] = False  # Only used here
+    options["generate_suggestion_list"] = False
     options["annotate_unparsed_sentences"] = True
-    options["ignore_wordlist"] = set([])
+    options["suppress_suggestions"] = False
+    options["replace_html_escapes"] = True
+    options["ignore_wordlist"] = set()
     options["spaced"] = False
     options["print_all"] = True
+    options["ignore_rules"] = set()
     args = parser.parse_args()
-    inputfile = args.inputfile
-    if inputfile == sys.stdin and sys.stdin.isatty():
+    infile = args.infile
+    if infile is sys.stdin and sys.stdin.isatty():
         # terminal input is empty, most likely no value was given for infile:
         # Nothing we can do
-        # inputfile = open("prufa.txt", "r")
         print("No input has been given, nothing can be returned")
-        raise ValueError
-    itering = gen(inputfile)
+        sys.exit(1)
+    itering = gen(infile)
     for sent in itering:
-        if not sent.strip():
+        sent = sent.strip()
+        if not sent:
             continue
         if sent.startswith("#"):
             # Comment string, want to show it with the examples
-            if not options["ignore_comments"]:
-                print(sent.strip())
+            if not options.get("ignore_comments"):
+                print(sent)
             continue
-        options["infile"] = sent
+        options["input"] = sent
         x = check_errors(**options)
         # Here we can compare x to gold by zipping sentences
         # from output and gold together and iterating in a for loop
@@ -78,6 +82,14 @@ def main():
         if x:
             print(x)
         print("=================================")
+    """
+    # Used when output shouldn't be split into sentences
+    options["input"] = infile
+    x = check_errors(**options)
+    if x:
+        print(x)
+    print("=================================")
+    """
 
 
 if __name__ == "__main__":

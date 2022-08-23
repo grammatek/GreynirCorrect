@@ -4,7 +4,7 @@
 
     Spelling correction module
 
-    Copyright (C) 2021 Miðeind ehf.
+    Copyright (C) 2022 Miðeind ehf.
 
     This software is licensed under the MIT License:
 
@@ -35,7 +35,7 @@
 
 """
 
-from typing import DefaultDict, List, Tuple, Set, Union, Optional, Iterable, Callable
+from typing import DefaultDict, List, Tuple, Set, Optional, Iterable, Callable
 from typing import TYPE_CHECKING
 
 import math
